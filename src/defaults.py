@@ -26,9 +26,6 @@ from __future__ import print_function, absolute_import
 
 from collections import defaultdict
 
-from docopt import docopt
-from workflow import Workflow3
-
 
 log = None
 
@@ -40,13 +37,13 @@ class Defaults(object):
 
     """
 
-    def __init__(self, wf):
+    def __init__(self, settings):
         """Create new `Defaults` for workflow.
 
         Args:
-            wf (Workflow3): Active Workflow3 object.
+            settings (dict): Active Workflow3 object.
         """
-        self._wf = wf
+        self._settings = settings
         self._defs = self._load()
 
     def defaults(self, dimensionality):
@@ -100,36 +97,9 @@ class Defaults(object):
 
     def _load(self):
         defs = defaultdict(list)
-        defs.update(self._wf.settings.get('default_units', {}))
+        defs.update(self._settings.get('default_units', {}))
         return defs
 
     def _save(self):
-        self._wf.settings['default_units'] = dict(self._defs)
+        self._settings['default_units'] = dict(self._defs)
 
-
-def main(wf):
-    """Run script."""
-    args = docopt(__doc__, wf.args)
-    log.debug('args=%r', args)
-
-    defs = Defaults(wf)
-    log.debug('defaults=%r', defs._defs)
-
-    dimensionality = args['<dimensionality>']
-    unit = args['<unit>']
-
-    if args['save']:
-        defs.add(dimensionality, unit)
-        print(u'Saved {} as default unit for {}'.format(unit, dimensionality))
-        return
-
-    if args['delete']:
-        defs.remove(dimensionality, unit)
-        print(u'Removed {} as default unit for {}'.format(unit, dimensionality))
-        return
-
-
-if __name__ == '__main__':
-    wf = Workflow3()
-    log = wf.logger
-    wf.run(main)

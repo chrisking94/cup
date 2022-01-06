@@ -16,7 +16,6 @@ from collections import namedtuple
 import logging
 
 import pytest
-from workflow import Workflow3
 
 import convert
 from defaults import Defaults
@@ -98,14 +97,12 @@ def test_defaults():
             C(100, 'gram', 100000, 'milligram', '[mass]')]),
     ]
 
-    wf = Workflow3()
-    if 'default_units' not in wf.settings:
-        wf.settings['default_units'] = {}
+    settings = {}
+    settings['default_units'] = {}
+    settings['default_units']['[length]'] = ['centimeter', 'kilometer']
+    settings['default_units']['[mass]'] = ['kilogram', 'milligram']
 
-    wf.settings['default_units']['[length]'] = ['centimeter', 'kilometer']
-    wf.settings['default_units']['[mass]'] = ['kilogram', 'milligram']
-
-    c = convert.Converter(Defaults(wf))
+    c = convert.Converter(Defaults(settings))
 
     for t in data:
         i = c.parse(t[0])

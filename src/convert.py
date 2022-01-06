@@ -12,14 +12,12 @@
 
 from __future__ import print_function
 
+import logging
 import os
 import sys
 
 from pint import UnitRegistry, UndefinedUnitError, DimensionalityError
 
-from workflow import Workflow3, ICON_WARNING, ICON_INFO
-from workflow.background import run_in_background, is_running
-from workflow.update import Version
 from config import (
     bootstrap,
     DEFAULT_UNIT_DEFINITIONS,
@@ -41,11 +39,13 @@ from config import (
     UPDATE_SETTINGS,
 )
 from defaults import Defaults
+from src.utils import unicode
 
-log = None
+log = logging.getLogger()
 
 # Pint objects
-ureg = None
+ureg = UnitRegistry(DEFAULT_UNIT_DEFINITIONS)
+ureg.default_format = 'P'
 # Q = ureg.Quantity
 
 
@@ -53,70 +53,6 @@ def unit_is_currency(unit):
     """Return ``True`` if specified unit is a fiat currency."""
     from config import CURRENCIES
     return unit.upper() in CURRENCIES
-
-
-def open_currency_instructions():
-    """Magic action to open help in browser."""
-    import webbrowser
-    webbrowser.open('https://github.com/deanishe/alfred-convert#conversions')
-    return 'Opening instructions in browser...'
-
-
-def error_if_currency(unit):
-    """Show an error currency conversion isn't set up.
-
-    Detect whether input is a currency, and show an error if it is and
-    there's no API key for exchange rates.
-    """
-    if unit_is_currency(unit):
-        log.error(
-            "[parser] unit %s is a fiat currency, but OpenExchangeRates.org "
-            "API key isn't set", unit)
-
-        show_currency_help()
-        sys.exit(0)
-
-
-def show_currency_help():
-    """Show a message in Alfred telling user to set ``APP_KEY``."""
-    wf.add_item('Set APP_KEY to convert this currency',
-                'Action this item for instructions',
-                autocomplete='workflow:appkey',
-                icon=ICON_WARNING)
-
-    wf.send_feedback()
-
-
-def handle_update(wf):
-    """Clear cache on update.
-
-    Delete cached data if last-run version used a different format,
-    or if user has just added the ``APP_KEY`` for fiat currency
-    exchange rates.
-
-    """
-    nokey = wf.cachefile(NOKEY_FILENAME)
-    clear = False
-
-    # Clear cache if previous version was old
-    lv = wf.last_version_run
-    log.debug('version=%s, last_version=%s', wf.version, lv)
-    if wf.version > Version('3.0') and lv < Version('3.1'):
-        log.debug('clearing cache: saved data is incompatible')
-        clear = True
-
-    if OPENX_APP_KEY:
-        if os.path.exists(nokey):
-            os.unlink(nokey)
-            log.debug('clearing cache: APP_KEY was set')
-            clear = True
-    else:
-        if not os.path.exists(nokey):
-            open(nokey, 'wb').write('')
-
-    if clear:
-        wf.cache_data(CURRENCY_CACHE_NAME, None)
-        log.debug('cleared old cached currencies')
 
 
 class NoToUnits(Exception):
@@ -342,7 +278,6 @@ class Converter(object):
             try:
                 to_unit = ureg.Quantity(1, u)
             except UndefinedUnitError:
-                error_if_currency(u)
                 raise ValueError('Unknown unit: {}'.format(u))
 
             conv = qty.to(to_unit)
@@ -492,14 +427,12 @@ class Converter(object):
         try:
             from_unit = ureg.Quantity(qty, from_unit)
         except UndefinedUnitError:
-            error_if_currency(from_unit)
             raise ValueError('Unknown unit: ' + from_unit)
 
         if to_unit:
             try:
                 to_unit = ureg.Quantity(1, to_unit)
             except UndefinedUnitError:
-                error_if_currency(to_unit)
                 raise ValueError('Unknown unit: ' + to_unit)
 
         return from_unit, to_unit
@@ -510,7 +443,7 @@ def register_units():
     # Add custom units from workflow and user data
     ureg.load_definitions(BUILTIN_UNIT_DEFINITIONS)
 
-    user_definitions = wf.datafile(CUSTOM_DEFINITIONS_FILENAME)
+    user_definitions = CUSTOM_DEFINITIONS_FILENAME
 
     # User's custom units
     if os.path.exists(user_definitions):
@@ -548,145 +481,3 @@ def register_exchange_rates(exchange_rates):
         ureg.define(definition)
 
 
-def convert(query):
-    """Perform conversion and send results to Alfred."""
-    error = None
-    results = None
-
-    defs = Defaults(wf)
-    c = Converter(defs, DECIMAL_SEPARATOR, THOUSANDS_SEPARATOR)
-
-    try:
-        i = c.parse(query)
-    except ValueError as err:
-        log.critical(u'invalid query (%s): %s', query, err)
-        error = err.message
-
-    else:
-        try:
-            results = c.convert(i)
-            # log.debug('results=%r', results)
-        except NoToUnits:
-            log.critical(u'No to_units (or defaults) for %s', i.dimensionality)
-            error = u'No destination units (or defaults) for {}'.format(
-                i.dimensionality)
-
-        except DimensionalityError as err:
-            log.critical(u'invalid conversion (%s): %s', query, err)
-            error = u"Can't convert from {} {} to {} {}".format(
-                err.units1, err.dim1, err.units2, err.dim2)
-
-        except KeyError as err:
-            log.critical(u'invalid context (%s): %s', i.context, err)
-            error = u'Unknown context: {}'.format(i.context)
-
-    if not error and not results:
-        error = 'Conversion input not understood'
-
-    if error:  # Show error
-        wf.add_item(error,
-                    'For example: 2.5cm in  |  178lb kg  |  200m/s mph',
-                    valid=False, icon=ICON_WARNING)
-
-    else:  # Show results
-        p = CURRENCY_DECIMAL_PLACES if i.is_currency else DECIMAL_PLACES
-        f = Formatter(p, DECIMAL_SEPARATOR, THOUSANDS_SEPARATOR,
-                      DYNAMIC_DECIMALS)
-        wf.setvar('query', query)
-        for conv in results:
-            value = copytext = f.formatted(conv.to_number, conv.to_unit)
-            arg = f.formatted_no_thousands(conv.to_number, conv.to_unit)
-            if not COPY_UNIT:
-                copytext = f.formatted(conv.to_number)
-                arg = f.formatted_no_thousands(conv.to_number)
-
-            it = wf.add_item(value,
-                             valid=True,
-                             arg=arg,
-                             copytext=copytext,
-                             largetext=value,
-                             icon='icon.png')
-
-            action = 'save'
-            name = 'Save'
-            if defs.is_default(conv.dimensionality, conv.to_unit):
-                action = 'delete'
-                name = 'Remove'
-
-            mod = it.add_modifier(
-                'cmd',
-                u'{} {} as default unit for {}'.format(
-                    name, conv.to_unit, conv.dimensionality))
-            mod.setvar('action', action)
-            mod.setvar('unit', conv.to_unit)
-            mod.setvar('dimensionality', conv.dimensionality)
-
-    wf.send_feedback()
-    log.debug('finished')
-    return 0
-
-
-def main(wf):
-    """Run workflow Script Filter.
-
-    Args:
-        wf (workflow.Workflow): Current Workflow object.
-
-    """
-    global ureg
-    ureg = UnitRegistry(wf.decode(DEFAULT_UNIT_DEFINITIONS))
-    ureg.default_format = 'P'
-
-    wf.magic_arguments['appkey'] = open_currency_instructions
-
-    if not len(wf.args):
-        return
-
-    query = wf.args[0]  # .lower()
-    log.debug('query : %s', query)
-
-    handle_update(wf)
-    # Create data files if necessary
-    bootstrap(wf)
-
-    # Add workflow and user units to unit registry
-    register_units()
-
-    # Notify of available update
-    if wf.update_available:
-        wf.add_item('A newer version is available',
-                    'Action this item to download & install the new version',
-                    autocomplete='workflow:update',
-                    icon=ICON_UPDATE)
-
-    # Load cached data
-    exchange_rates = wf.cached_data(CURRENCY_CACHE_NAME, max_age=0)
-
-    if exchange_rates:  # Add exchange rates to conversion database
-        register_exchange_rates(exchange_rates)
-
-    if not wf.cached_data_fresh(CURRENCY_CACHE_NAME, CURRENCY_CACHE_AGE):
-        # Update currency rates
-        cmd = ['/usr/bin/python', wf.workflowfile('currency.py')]
-        run_in_background('update', cmd)
-        wf.rerun = 0.5
-
-    if is_running('update'):
-        wf.rerun = 0.5
-        if exchange_rates is None:  # No data cached yet
-            wf.add_item(u'Fetching exchange rates…',
-                        'Currency conversions will be momentarily possible',
-                        icon=ICON_INFO)
-        else:
-            wf.add_item(u'Updating exchange rates…',
-                        icon=ICON_INFO)
-
-    return convert(query)
-
-
-if __name__ == '__main__':
-    wf = Workflow3(update_settings=UPDATE_SETTINGS,
-                   default_settings=DEFAULT_SETTINGS,
-                   help_url=HELP_URL)
-    log = wf.logger
-    sys.exit(wf.run(main))

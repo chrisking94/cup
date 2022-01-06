@@ -12,12 +12,12 @@
 
 from __future__ import print_function
 
-from itertools import izip_longest
+import logging
+from itertools import zip_longest
 from multiprocessing.dummy import Pool
 import os
 import time
-
-from workflow import Workflow, web
+import requests
 
 from config import (
     bootstrap,
@@ -33,10 +33,11 @@ from config import (
     SYMBOLS_PER_REQUEST,
     USER_AGENT,
     XRA_API_URL,
+    datafile,
 )
 
 
-log = None
+log = logging.getLogger()
 
 
 def grouper(n, iterable):
@@ -54,7 +55,7 @@ def grouper(n, iterable):
     sentinel = object()
     args = [iter(iterable)] * n
     groups = []
-    for l in izip_longest(*args, fillvalue=sentinel):
+    for l in zip_longest(*args, fillvalue=sentinel):
         groups.append([v for v in l if v is not sentinel])
     return groups
 
@@ -73,7 +74,7 @@ def load_cryptocurrency_rates(symbols):
     url = CRYPTO_COMPARE_BASE_URL.format(REFERENCE_CURRENCY, ','.join(symbols))
 
     log.debug('fetching %s ...', url)
-    r = web.get(url, headers={'User-Agent': USER_AGENT})
+    r = requests.get(url, headers={'User-Agent': USER_AGENT})
     r.raise_for_status()
 
     data = r.json()
@@ -94,7 +95,7 @@ def load_xra_rates(symbols):
     rates = {}
     wanted = set(symbols)
     url = XRA_API_URL.format(REFERENCE_CURRENCY)
-    r = web.get(url, headers={'User-Agent': USER_AGENT})
+    r = requests.get(url, headers={'User-Agent': USER_AGENT})
     r.raise_for_status()
     log.debug('[%s] %s', r.status_code, url)
     data = r.json()
@@ -132,7 +133,7 @@ def load_openx_rates(symbols):
         return rates
 
     url = OPENX_API_URL.format(OPENX_APP_KEY)
-    r = web.get(url, headers={'User-Agent': USER_AGENT})
+    r = requests.get(url, headers={'User-Agent': USER_AGENT})
     r.raise_for_status()
     log.debug('[%s] %s', r.status_code, OPENX_API_URL.format('XXX'))
     data = r.json()
@@ -156,7 +157,7 @@ def load_active_currencies():
     """
     symbols = set()
 
-    user_currencies = wf.datafile(ACTIVE_CURRENCIES_FILENAME)
+    user_currencies = datafile(ACTIVE_CURRENCIES_FILENAME)
     if not os.path.exists(user_currencies):
         return symbols
 
@@ -249,8 +250,3 @@ def main(wf):
     for currency, rate in sorted(rates.items()):
         log.debug('1 %s = %s %s', REFERENCE_CURRENCY, rate, currency)
 
-
-if __name__ == '__main__':
-    wf = Workflow()
-    log = wf.logger
-    wf.run(main)

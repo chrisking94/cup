@@ -1774,3 +1774,7 @@ def bootstrap(wf):
     for path, default in filepaths:
         if not os.path.exists(path):
             shutil.copy(default, path)
+
+
+def datafile(path):
+    return path
